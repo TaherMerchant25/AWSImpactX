@@ -1,0 +1,142 @@
+# ASPERA Configuration
+project:
+  name: "ASPERA"
+  version: "1.0.0"
+  environment: "development"
+
+aws:
+  region: "us-east-1"
+  account_id: "${AWS_ACCOUNT_ID}"
+  
+  s3:
+    bucket_name: "aspera-deal-flow"
+    prefix: "proposals/"
+    
+  textract:
+    analyze_document: true
+    feature_types:
+      - "TABLES"
+      - "FORMS"
+      - "LAYOUT"
+      
+  opensearch:
+    domain: "aspera-knowledge-graph"
+    instance_type: "serverless"
+    index_name: "documents"
+    embedding_dimension: 1536
+    
+  bedrock:
+    model_id: "anthropic.claude-3-5-sonnet-20241022-v2:0"
+    temperature: 0.1
+    max_tokens: 4096
+    
+  lambda:
+    timeout: 900
+    memory_size: 2048
+    runtime: "python3.11"
+    
+  step_functions:
+    state_machine_name: "aspera-orchestration"
+    
+  amplify:
+    app_name: "aspera-dashboard"
+
+agents:
+  consistency:
+    name: "Consistency Agent"
+    enabled: true
+    priority: 1
+    
+  greenwashing:
+    name: "Greenwashing Detector"
+    enabled: true
+    priority: 2
+    keywords:
+      - "carbon neutral"
+      - "net zero"
+      - "sustainable"
+      - "green"
+      - "eco-friendly"
+      - "climate positive"
+      
+  compliance:
+    name: "Compliance Check Agent"
+    enabled: true
+    priority: 3
+    frameworks:
+      - "SEC"
+      - "GDPR"
+      - "SOX"
+      - "Basel III"
+      
+  math:
+    name: "Math Agent"
+    enabled: true
+    priority: 4
+    
+  risk_analysis:
+    name: "Risk Analysis Agent"
+    enabled: true
+    priority: 5
+
+mcp_hub:
+  protocol_version: "1.0"
+  max_concurrent_tools: 10
+  timeout: 300
+  
+  tools:
+    database:
+      type: "SQL"
+      connection_string: "${DATABASE_URL}"
+      
+    external_apis:
+      - name: "market_data"
+        endpoint: "${MARKET_DATA_API}"
+      - name: "regulatory_check"
+        endpoint: "${REGULATORY_API}"
+      - name: "esg_scoring"
+        endpoint: "${ESG_API}"
+
+knowledge_graph:
+  type: "neo4j"
+  uri: "${NEO4J_URI}"
+  database: "aspera"
+  
+  entity_types:
+    - "Company"
+    - "Person"
+    - "Contract"
+    - "Risk"
+    - "Compliance"
+    - "Financial"
+    - "ESG"
+    
+  relationship_types:
+    - "INVOLVES"
+    - "HAS_RISK"
+    - "REQUIRES_COMPLIANCE"
+    - "CONTAINS_FINANCIAL"
+    - "RELATED_TO"
+
+processing:
+  chunk_size: 1000
+  chunk_overlap: 200
+  max_parallel_documents: 5
+  
+output:
+  formats:
+    - "json"
+    - "pdf"
+    - "html"
+    
+  risk_levels:
+    - "LOW"
+    - "MEDIUM"
+    - "HIGH"
+    - "CRITICAL"
+    
+  recommendation_types:
+    - "GO"
+    - "NO_GO"
+    - "CONDITIONAL"
+    - "REQUIRES_REVIEW"

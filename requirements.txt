@@ -1,0 +1,59 @@
+# Core Dependencies
+boto3>=1.34.34
+botocore>=1.34.34
+
+# AWS SDK Extensions
+aws-lambda-powertools>=2.31.0
+aws-xray-sdk>=2.12.1
+
+# AI/ML Libraries
+langchain>=0.3.0
+langchain-aws>=0.2.0
+langchain-community>=0.3.0
+anthropic>=0.18.1
+openai>=1.10.0
+
+# Document Processing
+pypdf>=4.0.1
+pdfplumber>=0.10.4
+python-docx>=1.1.0
+openpyxl>=3.1.2
+pillow>=10.3.0
+
+# Vector Store & Search
+opensearch-py>=2.4.2
+faiss-cpu>=1.9.0
+chromadb>=0.4.22
+
+# Graph Database
+neo4j>=5.16.0
+networkx>=3.2.1
+
+# Data Processing
+pandas>=2.2.0
+numpy>=2.0.0
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+
+# API Framework
+fastapi>=0.109.0
+uvicorn>=0.27.0
+mangum>=0.17.0
+
+# Utilities
+python-dotenv>=1.0.1
+tenacity>=8.2.3
+aiohttp>=3.9.3
+httpx>=0.26.0
+requests>=2.31.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+pytest-cov>=4.1.0
+moto>=5.0.0
+
+# Development
+black>=24.1.1
+flake8>=7.0.0
+mypy>=1.8.0

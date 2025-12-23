@@ -1,0 +1,269 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: ASPERA - AI-Powered Due Diligence Pipeline
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+  
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-3-5-sonnet-20241022-v2:0
+
+Globals:
+  Function:
+    Timeout: 900
+    MemorySize: 2048
+    Runtime: python3.11
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        RESULTS_TABLE: !Ref ResultsTable
+        CONTEXT_TABLE: !Ref ContextTable
+
+Resources:
+  # S3 Buckets
+  DealFlowBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub aspera-deal-flow-${Environment}
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
+
+  StructuredDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub aspera-structured-data-${Environment}
+      VersioningConfiguration:
+        Status: Enabled
+
+  # DynamoDB Tables
+  ResultsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub aspera-results-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: document_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: document_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  ContextTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub aspera-contexts-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: context_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: context_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # OpenSearch Serverless Collection
+  OpenSearchCollection:
+    Type: AWS::OpenSearchServerless::Collection
+    Properties:
+      Name: !Sub aspera-knowledge-${Environment}
+      Type: VECTORSEARCH
+      Description: Vector store for ASPERA knowledge base
+
+  # Lambda Functions
+  S3EventHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub aspera-s3-event-handler-${Environment}
+      CodeUri: ../../src/ingestion/
+      Handler: s3_event_handler.lambda_handler
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref DealFlowBucket
+        - EventBridgePutEventsPolicy:
+            EventBusName: default
+      Events:
+        S3Event:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - aws.s3
+              detail-type:
+                - Object Created
+              detail:
+                bucket:
+                  name:
+                    - !Ref DealFlowBucket
+
+  DocumentProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub aspera-document-processor-${Environment}
+      CodeUri: ../../src/ingestion/
+      Handler: document_processor.lambda_handler
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref StructuredDataBucket
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref DealFlowBucket
+        - S3WritePolicy:
+            BucketName: !Ref StructuredDataBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - textract:AnalyzeDocument
+                - textract:DetectDocumentText
+              Resource: '*'
+
+  KnowledgeGraphFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub aspera-knowledge-graph-${Environment}
+      CodeUri: ../../src/knowledge/
+      Handler: knowledge_graph_builder.lambda_handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - aoss:APIAccessAll
+              Resource: !GetAtt OpenSearchCollection.Arn
+
+  VectorIndexingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub aspera-vector-indexing-${Environment}
+      CodeUri: ../../src/knowledge/
+      Handler: vector_store_manager.lambda_handler
+      Environment:
+        Variables:
+          OPENSEARCH_ENDPOINT: !GetAtt OpenSearchCollection.CollectionEndpoint
+          OPENSEARCH_INDEX: documents
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - aoss:APIAccessAll
+              Resource: !GetAtt OpenSearchCollection.Arn
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: '*'
+
+  AgentOrchestrationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub aspera-agent-orchestration-${Environment}
+      CodeUri: ../../src/orchestration/
+      Handler: pipeline_orchestrator.agent_orchestration_handler
+      Timeout: 900
+      MemorySize: 3008
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ContextTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: '*'
+
+  # Step Functions State Machine
+  AsperaStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub aspera-pipeline-${Environment}
+      DefinitionUri: ./step-functions/aspera-state-machine.json
+      DefinitionSubstitutions:
+        IngestionLambdaArn: !GetAtt DocumentProcessorFunction.Arn
+        KnowledgeGraphLambdaArn: !GetAtt KnowledgeGraphFunction.Arn
+        VectorIndexingLambdaArn: !GetAtt VectorIndexingFunction.Arn
+        AgentOrchestrationLambdaArn: !GetAtt AgentOrchestrationFunction.Arn
+        ReportGeneratorLambdaArn: !GetAtt ReportGeneratorFunction.Arn
+        ErrorHandlerLambdaArn: !GetAtt ErrorHandlerFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref DocumentProcessorFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref KnowledgeGraphFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref VectorIndexingFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AgentOrchestrationFunction
+        - EventBridgePutEventsPolicy:
+            EventBusName: default
+
+  ReportGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub aspera-report-generator-${Environment}
+      CodeUri: ../../src/orchestration/
+      Handler: pipeline_orchestrator.orchestrator_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ResultsTable
+        - S3WritePolicy:
+            BucketName: !Ref StructuredDataBucket
+
+  ErrorHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub aspera-error-handler-${Environment}
+      Handler: index.handler
+      InlineCode: |
+        import json
+        def handler(event, context):
+            print(f"Error occurred: {json.dumps(event)}")
+            return {'statusCode': 500, 'body': json.dumps(event)}
+
+Outputs:
+  DealFlowBucketName:
+    Description: S3 bucket for document uploads
+    Value: !Ref DealFlowBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-DealFlowBucket
+  
+  StateMachineArn:
+    Description: ARN of Step Functions state machine
+    Value: !Ref AsperaStateMachine
+    Export:
+      Name: !Sub ${AWS::StackName}-StateMachine
+  
+  OpenSearchEndpoint:
+    Description: OpenSearch collection endpoint
+    Value: !GetAtt OpenSearchCollection.CollectionEndpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-OpenSearchEndpoint
+  
+  ResultsTableName:
+    Description: DynamoDB table for results
+    Value: !Ref ResultsTable
+    Export:
+      Name: !Sub ${AWS::StackName}-ResultsTable

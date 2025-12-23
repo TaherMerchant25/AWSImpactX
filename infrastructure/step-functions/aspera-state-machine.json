@@ -1,0 +1,135 @@
+{
+  "Comment": "ASPERA Due Diligence Pipeline State Machine",
+  "StartAt": "DocumentIngestion",
+  "States": {
+    "DocumentIngestion": {
+      "Type": "Task",
+      "Resource": "${IngestionLambdaArn}",
+      "Comment": "Extract text and tables from document using Textract",
+      "Parameters": {
+        "bucket.$": "$.bucket",
+        "key.$": "$.key",
+        "request_id.$": "$.request_id"
+      },
+      "ResultPath": "$.ingestion_result",
+      "Next": "ParallelKnowledgeProcessing",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    
+    "ParallelKnowledgeProcessing": {
+      "Type": "Parallel",
+      "Comment": "Process knowledge graph and vector embeddings in parallel",
+      "Branches": [
+        {
+          "StartAt": "BuildKnowledgeGraph",
+          "States": {
+            "BuildKnowledgeGraph": {
+              "Type": "Task",
+              "Resource": "${KnowledgeGraphLambdaArn}",
+              "Parameters": {
+                "structured_data.$": "$.ingestion_result.structured_data"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "VectorIndexing",
+          "States": {
+            "VectorIndexing": {
+              "Type": "Task",
+              "Resource": "${VectorIndexingLambdaArn}",
+              "Parameters": {
+                "structured_data.$": "$.ingestion_result.structured_data"
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.knowledge_result",
+      "Next": "AgentOrchestration"
+    },
+    
+    "AgentOrchestration": {
+      "Type": "Task",
+      "Resource": "${AgentOrchestrationLambdaArn}",
+      "Comment": "Run multi-agent analysis with Chain of Thought",
+      "Parameters": {
+        "structured_data.$": "$.ingestion_result.structured_data",
+        "knowledge_graph.$": "$.knowledge_result[0].knowledge_graph",
+        "vector_result.$": "$.knowledge_result[1].indexing_result",
+        "request_id.$": "$.request_id"
+      },
+      "ResultPath": "$.analysis_result",
+      "Next": "GenerateFinalReport",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    
+    "GenerateFinalReport": {
+      "Type": "Task",
+      "Resource": "${ReportGeneratorLambdaArn}",
+      "Comment": "Generate comprehensive due diligence report",
+      "Parameters": {
+        "document_data.$": "$.ingestion_result.structured_data",
+        "knowledge_graph.$": "$.knowledge_result[0].knowledge_graph",
+        "analysis_result.$": "$.analysis_result.analysis_result",
+        "request_id.$": "$.request_id"
+      },
+      "ResultPath": "$.final_report",
+      "Next": "PublishResults"
+    },
+    
+    "PublishResults": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::events:putEvents",
+      "Comment": "Publish completion event",
+      "Parameters": {
+        "Entries": [
+          {
+            "Source": "aspera.pipeline",
+            "DetailType": "AnalysisCompleted",
+            "Detail": {
+              "request_id.$": "$.request_id",
+              "decision.$": "$.final_report.executive_summary.decision",
+              "confidence_score.$": "$.final_report.executive_summary.confidence_score"
+            }
+          }
+        ]
+      },
+      "Next": "Success"
+    },
+    
+    "Success": {
+      "Type": "Succeed",
+      "Comment": "Pipeline completed successfully"
+    },
+    
+    "HandleError": {
+      "Type": "Task",
+      "Resource": "${ErrorHandlerLambdaArn}",
+      "Parameters": {
+        "error.$": "$.error",
+        "request_id.$": "$.request_id"
+      },
+      "Next": "Fail"
+    },
+    
+    "Fail": {
+      "Type": "Fail",
+      "Comment": "Pipeline failed"
+    }
+  }
+}
