@@ -1,5 +1,5 @@
-import AsperaLanding from "@/components/ui/aspera-landing";
+import LandingPage from "@/components/landing/LandingPage";
 
 export default function Home() {
-  return <AsperaLanding />;
+  return <LandingPage />;
 }
